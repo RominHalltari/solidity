@@ -44,10 +44,12 @@ using namespace solidity::yul;
 
 DataFlowAnalyzer::DataFlowAnalyzer(
 	Dialect const& _dialect,
-	map<YulString, SideEffects> _functionSideEffects
+	map<YulString, SideEffects> _functionSideEffects,
+	map<YulString, ControlFlowSideEffects> _controlFlowSideEffects
 ):
 	m_dialect(_dialect),
 	m_functionSideEffects(std::move(_functionSideEffects)),
+	m_controlFlowSideEffects(std::move(_controlFlowSideEffects)),
 	m_knowledgeBase(_dialect, [this] { return allValues(); })
 {
 	if (auto const* builtin = _dialect.memoryStoreFunction(YulString{}))
@@ -117,48 +119,62 @@ void DataFlowAnalyzer::operator()(VariableDeclaration& _varDecl)
 void DataFlowAnalyzer::operator()(If& _if)
 {
 	clearKnowledgeIfInvalidated(*_if.condition);
-	unordered_map<YulString, YulString> storage = m_state.storage;
-	unordered_map<YulString, YulString> memory = m_state.memory;
+
+	State preState = m_state;
 
 	ASTModifier::operator()(_if);
 
-	joinKnowledge(storage, memory);
-
-	clearValues(assignedVariableNames(_if.body));
+	if (
+		!_if.body.statements.empty() &&
+		TerminationFinder{m_dialect, &m_controlFlowSideEffects}.
+		controlFlowKind(_if.body.statements.back()) != TerminationFinder::ControlFlow::FlowOut
+	)
+		m_state = move(preState);
+	else
+	{
+		joinKnowledge(preState);
+		clearValues(assignedVariableNames(_if.body));
+	}
 }
 
 void DataFlowAnalyzer::operator()(Switch& _switch)
 {
 	clearKnowledgeIfInvalidated(*_switch.expression);
 	visit(*_switch.expression);
-	set<YulString> assignedVariables;
+
+	State preState = m_state;
+
+	// TODO if there is a default case, this could maybe initialized as the state after the first case
+	State postState = m_state;
+
 	for (auto& _case: _switch.cases)
 	{
-		unordered_map<YulString, YulString> storage = m_state.storage;
-		unordered_map<YulString, YulString> memory = m_state.memory;
+		m_state = preState;
 		(*this)(_case.body);
-		joinKnowledge(storage, memory);
 
-		set<YulString> variables = assignedVariableNames(_case.body);
-		assignedVariables += variables;
-		// This is a little too destructive, we could retain the old values.
-		clearValues(variables);
-		clearKnowledgeIfInvalidated(_case.body);
+		if (
+			_case.body.statements.empty() ||
+			TerminationFinder{m_dialect, &m_controlFlowSideEffects}.
+			controlFlowKind(_case.body.statements.back()) == TerminationFinder::ControlFlow::FlowOut
+		)
+		{
+			// TODO maybe we need the symmetric check here because
+			// postState is not always an ancestor of m_storage
+			joinKnowledge(postState);
+			clearValues(assignedVariableNames(_case.body));
+
+			postState = move(m_state);
+		}
 	}
-	for (auto& _case: _switch.cases)
-		clearKnowledgeIfInvalidated(_case.body);
-	clearValues(assignedVariables);
+	m_state = move(postState);
 }
 
 void DataFlowAnalyzer::operator()(FunctionDefinition& _fun)
 {
 	// Save all information. We might rather reinstantiate this class,
 	// but this could be difficult if it is subclassed.
-	ScopedSaveAndRestore valueResetter(m_state.value, {});
+	ScopedSaveAndRestore stateResetter(m_state, {});
 	ScopedSaveAndRestore loopDepthResetter(m_loopDepth, 0u);
-	ScopedSaveAndRestore referencesResetter(m_state.references, {});
-	ScopedSaveAndRestore storageResetter(m_state.storage, {});
-	ScopedSaveAndRestore memoryResetter(m_state.memory, {});
 	pushScope(true);
 
 	for (auto const& parameter: _fun.parameters)
@@ -361,30 +377,6 @@ void DataFlowAnalyzer::clearKnowledgeIfInvalidated(Expression const& _expr)
 		m_state.memory.clear();
 }
 
-void DataFlowAnalyzer::joinKnowledge(
-	unordered_map<YulString, YulString> const& _olderStorage,
-	unordered_map<YulString, YulString> const& _olderMemory
-)
-{
-	joinKnowledgeHelper(m_state.storage, _olderStorage);
-	joinKnowledgeHelper(m_state.memory, _olderMemory);
-}
-
-void DataFlowAnalyzer::joinKnowledgeHelper(
-	std::unordered_map<YulString, YulString>& _this,
-	std::unordered_map<YulString, YulString> const& _older
-)
-{
-	// We clear if the key does not exist in the older map or if the value is different.
-	// This also works for memory because _older is an "older version"
-	// of m_state.memory and thus any overlapping write would have cleared the keys
-	// that are not known to be different inside m_state.memory already.
-	cxx20::erase_if(_this, mapTuple([&_older](auto&& key, auto&& currentValue){
-		YulString const* oldValue = valueOrNullptr(_older, key);
-		return !oldValue || *oldValue != currentValue;
-	}));
-}
-
 bool DataFlowAnalyzer::inScope(YulString _variableName) const
 {
 	for (auto const& scope: m_variableScopes | ranges::views::reverse)
@@ -428,4 +420,25 @@ std::optional<YulString> DataFlowAnalyzer::isSimpleLoad(
 			if (Identifier const* key = std::get_if<Identifier>(&funCall->arguments.front()))
 				return key->name;
 	return {};
+}
+
+void DataFlowAnalyzer::joinKnowledge(State const& _olderState)
+{
+	joinKnowledgeHelper(m_state.storage, _olderState.storage);
+	joinKnowledgeHelper(m_state.memory, _olderState.memory);
+}
+
+void DataFlowAnalyzer::joinKnowledgeHelper(
+	std::unordered_map<YulString, YulString>& _this,
+	std::unordered_map<YulString, YulString> const& _older
+)
+{
+	// We clear if the key does not exist in the older map or if the value is different.
+	// This also works for memory because _older is an "older version"
+	// of m_state.memory and thus any overlapping write would have cleared the keys
+	// that are not known to be different inside m_state.memory already.
+	cxx20::erase_if(_this, mapTuple([&_older](auto&& key, auto&& currentValue){
+		YulString const* oldValue = valueOrNullptr(_older, key);
+		return !oldValue || *oldValue != currentValue;
+	}));
 }
