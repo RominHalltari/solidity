@@ -100,6 +100,13 @@ public:
 	void operator()(ForLoop&) override;
 	void operator()(Block& _block) override;
 
+	/// @returns the current value of the given variable, if known - always movable.
+	AssignedValue const* variableValue(YulString _variable) const { return util::valueOrNullptr(m_state.value, _variable); }
+	std::set<YulString> const* references(YulString _variable) const { return util::valueOrNullptr(m_state.references, _variable); }
+	std::map<YulString, AssignedValue> const& allValues() const { return m_state.value; }
+	std::optional<YulString> storageValue(YulString _key) const;
+	std::optional<YulString> memoryValue(YulString _key) const;
+
 protected:
 	/// Registers the assignment.
 	void handleAssignment(std::set<YulString> const& _names, Expression* _value, bool _isDeclaration);
@@ -166,21 +173,18 @@ protected:
 	/// if this is not provided or the function is not found.
 	std::map<YulString, SideEffects> m_functionSideEffects;
 
-public:
-	/// @returns the current value of the given variable, if known - always movable.
-	AssignedValue const* variableValue(YulString _variable) const { return util::valueOrNullptr(m_value, _variable); }
-	std::set<YulString> const* references(YulString _variable) const { return util::valueOrNullptr(m_references, _variable); }
-	std::map<YulString, AssignedValue> const& allValues() const { return m_value; }
-	std::optional<YulString> storageValue(YulString _key) const;
-	std::optional<YulString> memoryValue(YulString _key) const;
 private:
-	/// Current values of variables, always movable.
-	std::map<YulString, AssignedValue> m_value;
-	/// m_references[a].contains(b) <=> the current expression assigned to a references b
-	std::unordered_map<YulString, std::set<YulString>> m_references;
+	struct State
+	{
+		/// Current values of variables, always movable.
+		std::map<YulString, AssignedValue> value;
+		/// m_references[a].contains(b) <=> the current expression assigned to a references b
+		std::unordered_map<YulString, std::set<YulString>> references;
 
-	std::unordered_map<YulString, YulString> m_storage;
-	std::unordered_map<YulString, YulString> m_memory;
+		std::unordered_map<YulString, YulString> storage;
+		std::unordered_map<YulString, YulString> memory;
+	};
+	State m_state;
 protected:
 
 	KnowledgeBase m_knowledgeBase;
