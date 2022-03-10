@@ -147,6 +147,7 @@ void DataFlowAnalyzer::operator()(Switch& _switch)
 	// TODO if there is a default case, this could maybe initialized as the state after the first case
 	State postState = m_state;
 
+	std::set<YulString> assignedVariables;
 	for (auto& _case: _switch.cases)
 	{
 		m_state = preState;
@@ -158,15 +159,14 @@ void DataFlowAnalyzer::operator()(Switch& _switch)
 			controlFlowKind(_case.body.statements.back()) == TerminationFinder::ControlFlow::FlowOut
 		)
 		{
-			// TODO maybe we need the symmetric check here because
-			// postState is not always an ancestor of m_storage
 			joinKnowledge(postState);
-			clearValues(assignedVariableNames(_case.body));
+			assignedVariables += assignedVariableNames(_case.body);
 
 			postState = move(m_state);
 		}
 	}
 	m_state = move(postState);
+	clearValues(assignedVariables);
 }
 
 void DataFlowAnalyzer::operator()(FunctionDefinition& _fun)
