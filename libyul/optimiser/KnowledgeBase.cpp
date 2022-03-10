@@ -80,8 +80,8 @@ bool KnowledgeBase::knownToBeZero(YulString _a)
 
 optional<u256> KnowledgeBase::valueIfKnownConstant(YulString _a)
 {
-	if (m_variableValues.count(_a))
-		if (Literal const* literal = get_if<Literal>(m_variableValues.at(_a).value))
+	if (m_variableValues().count(_a))
+		if (Literal const* literal = get_if<Literal>(m_variableValues().at(_a).value))
 			return valueOfLiteral(*literal);
 	return {};
 }
@@ -101,7 +101,7 @@ Expression KnowledgeBase::simplifyRecursively(Expression _expression)
 		for (Expression& arg: std::get<FunctionCall>(_expression).arguments)
 			arg = simplifyRecursively(arg);
 
-	if (auto match = SimplificationRules::findFirstMatch(_expression, m_dialect, m_variableValues))
+	if (auto match = SimplificationRules::findFirstMatch(_expression, m_dialect, m_variableValues()))
 		return simplifyRecursively(match->action().toExpression(debugDataOf(_expression)));
 
 	return _expression;

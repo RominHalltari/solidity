@@ -29,6 +29,7 @@
 #include <libyul/AST.h> // Needed for m_zero below.
 #include <libyul/SideEffects.h>
 
+#include <libsolutil/Numeric.h>
 #include <libsolutil/Common.h>
 
 #include <map>
@@ -38,6 +39,7 @@ namespace solidity::yul
 {
 struct Dialect;
 struct SideEffects;
+class KnowledgeBase;
 
 /// Value assigned to a variable.
 struct AssignedValue
@@ -164,6 +166,14 @@ protected:
 	/// if this is not provided or the function is not found.
 	std::map<YulString, SideEffects> m_functionSideEffects;
 
+public:
+	/// @returns the current value of the given variable, if known - always movable.
+	AssignedValue const* variableValue(YulString _variable) const { return util::valueOrNullptr(m_value, _variable); }
+	std::set<YulString> const* references(YulString _variable) const { return util::valueOrNullptr(m_references, _variable); }
+	std::map<YulString, AssignedValue> const& allValues() const { return m_value; }
+	std::optional<YulString> storageValue(YulString _key) const;
+	std::optional<YulString> memoryValue(YulString _key) const;
+private:
 	/// Current values of variables, always movable.
 	std::map<YulString, AssignedValue> m_value;
 	/// m_references[a].contains(b) <=> the current expression assigned to a references b
@@ -171,6 +181,7 @@ protected:
 
 	std::unordered_map<YulString, YulString> m_storage;
 	std::unordered_map<YulString, YulString> m_memory;
+protected:
 
 	KnowledgeBase m_knowledgeBase;
 

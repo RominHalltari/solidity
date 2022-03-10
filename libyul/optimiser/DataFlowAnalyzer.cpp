@@ -24,6 +24,7 @@
 
 #include <libyul/optimiser/NameCollector.h>
 #include <libyul/optimiser/Semantics.h>
+#include <libyul/optimiser/KnowledgeBase.h>
 #include <libyul/AST.h>
 #include <libyul/Dialect.h>
 #include <libyul/Exceptions.h>
@@ -47,7 +48,7 @@ DataFlowAnalyzer::DataFlowAnalyzer(
 ):
 	m_dialect(_dialect),
 	m_functionSideEffects(std::move(_functionSideEffects)),
-	m_knowledgeBase(_dialect, m_value)
+	m_knowledgeBase(_dialect, [this] { return allValues(); })
 {
 	if (auto const* builtin = _dialect.memoryStoreFunction(YulString{}))
 		m_storeFunctionName[static_cast<unsigned>(StoreLoadLocation::Memory)] = builtin->name;
@@ -386,8 +387,8 @@ bool DataFlowAnalyzer::inScope(YulString _variableName) const
 
 optional<u256> DataFlowAnalyzer::valueOfIdentifier(YulString const& _name)
 {
-	if (m_value.count(_name))
-		if (Literal const* literal = get_if<Literal>(m_value.at(_name).value))
+	if (AssignedValue const* value = variableValue(_name))
+		if (Literal const* literal = get_if<Literal>(value->value))
 			return valueOfLiteral(*literal);
 	return nullopt;
 }
@@ -415,4 +416,16 @@ std::optional<YulString> DataFlowAnalyzer::isSimpleLoad(
 			if (Identifier const* key = std::get_if<Identifier>(&funCall->arguments.front()))
 				return key->name;
 	return {};
+}
+
+optional<YulString> DataFlowAnalyzer::storageValue(YulString _key) const
+{
+	auto it = m_storage.find(_key);
+	return it == m_storage.end() ? nullopt : optional<YulString>{it->second};
+}
+
+optional<YulString> DataFlowAnalyzer::memoryValue(YulString _key) const
+{
+	auto it = m_memory.find(_key);
+	return it == m_memory.end() ? nullopt : optional<YulString>{it->second};
 }

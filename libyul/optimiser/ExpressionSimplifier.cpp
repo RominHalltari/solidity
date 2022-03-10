@@ -38,6 +38,6 @@ void ExpressionSimplifier::visit(Expression& _expression)
 {
 	ASTModifier::visit(_expression);
 
-	while (auto const* match = SimplificationRules::findFirstMatch(_expression, m_dialect, m_value))
+	while (auto const* match = SimplificationRules::findFirstMatch(_expression, m_dialect, allValues()))
 		_expression = match->action().toExpression(debugDataOf(_expression));
 }
