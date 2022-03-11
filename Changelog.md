@@ -10,6 +10,7 @@ Compiler Features:
  * Yul Optimizer: Remove ``sstore`` and ``mstore`` operations that are never read from.
 
 Bugfixes:
+ * Type Checker: Fix incorrect type checker errors when importing overloaded functions.
  * Yul IR Code Generation: Optimize embedded creation code with correct settings. This fixes potential mismatches between the constructor code of a contract compiled in isolation and the bytecode in ``type(C).creationCode``, resp. the bytecode used for ``new C(...)``.
 
 
